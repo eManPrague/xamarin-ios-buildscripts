@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package>
+  <metadata>
+    <id>eMan.Xamarin.iOS.InfoPlistVersion</id>
+    <version>1.0.0</version>
+    <authors>eMan s.r.o.</authors>
+    <owners>eMan</owners>
+    <description>Xamarin iOS MSBuild targets for chaning CFBundleVersion and CFBundleShortVersionString in Info.plist file</description>
+    <tags>xamarin ios xamarin-ios msbuild</tags>
+  </metadata>
+  <files>
+    <file src="eMan.Xamarin.iOS.InfoPlistVersion.targets" target="build\eMan.Xamarin.iOS.InfoPlistVersion.targets" />
+  </files>
+</package>

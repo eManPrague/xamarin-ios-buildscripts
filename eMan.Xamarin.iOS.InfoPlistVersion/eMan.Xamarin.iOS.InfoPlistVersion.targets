@@ -1,0 +1,91 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!-- Example usage: msbuild project.csproj /p:BundleVersionString=1.2.3 /p:BundleVersion=123 -->
+
+  <Target Name="OverrideInfoPlistVersionVersion" BeforeTargets="_DetectAppManifest">
+    <CallTarget Targets="CoreOverrideInfoPlistVersionVersion"
+                Condition=" '$(BundleVersionString)'!='' Or '$(BundleVersion)'!=''" />
+  </Target>
+  
+  <Target Name="DeleteBackupInfoPlist" AfterTargets="_CompileAppManifest">
+	<CallTarget Targets="CoreDeleteBackupInfoPlist"
+                Condition="$(InfoPlistBackupPath.EndsWith('.backup'))" />
+  </Target>
+
+  <Target Name="CoreDeleteBackupInfoPlist">
+	<Copy SourceFiles="$(InfoPlistBackupPath)" DestinationFiles="$(InfoPlistPath)" />
+	<Delete Files="$(InfoPlistBackupPath)" />
+	<Message Text="Backup Info.plist at $(InfoPlistBackupPath) deleted" />
+  </Target>
+  
+  <Target Name="CoreOverrideInfoPlistVersionVersion">
+    <PropertyGroup>
+      <InfoPlistPath>Info.plist</InfoPlistPath>
+    </PropertyGroup>
+
+    <Error Condition="'$(BundleVersion)'!='' and '$([System.Text.RegularExpressions.Regex]::IsMatch(&quot;$(BundleVersion)&quot;,&quot;^\d+$&quot;))' == false"
+           Text="BundleVersion '$(BundleVersion)' must be a positive integer."/>
+		   
+	<Error Condition="'$(BundleVersionString)'!='' and '$([System.Text.RegularExpressions.Regex]::IsMatch(&quot;$(BundleVersionString)&quot;,&quot;\s+$&quot;))' == true"
+          Text="BundleVersionString '$(BundleVersionString)' must not be empty string or only white spaces."/>
+
+    <Message Text="Setting CFBundleVersion to '$(BundleVersion)'" Condition="'$(BundleVersion)'!=''"/>
+	<Message Text="Setting CFBundleShortVersionString to '$(BundleVersionString)'" Condition="'$(BundleVersionString)'!=''"/>
+
+    <UpdateInfoPlistVersion BundleVersionString="$(BundleVersionString)" BundleVersion="$(BundleVersion)" InfoPlistPath="$(InfoPlistPath)" />
+
+    <Message Text="Info.plist is at $(InfoPlistPath)" />
+
+    <PropertyGroup>
+      <InfoPlistBackupPath>$(InfoPlistPath).backup</InfoPlistBackupPath>
+    </PropertyGroup>
+
+    <Message Text="Backup Info.plist is at $(InfoPlistBackupPath)" />
+  </Target>
+
+  <UsingTask TaskName="UpdateInfoPlistVersion" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
+    <ParameterGroup>
+      <InfoPlistPath ParameterType="System.String" Required="true" />
+	  <BundleVersionString ParameterType="System.String" Required="false" />
+      <BundleVersion ParameterType="System.String" Required="false" />
+    </ParameterGroup>
+
+    <Task>
+      <Reference Include="System.Xml" />
+      <Reference Include="System.Xml.Linq" />
+      <Using Namespace="System.Xml.Linq" />
+	  <Using Namespace="System.Xml.XPath" />
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs">
+<![CDATA[
+if (!File.Exists(InfoPlistPath)) 
+{
+	Log.LogError(string.Format("The Info.plist could not be located at path '{0}'", InfoPlistPath));
+	return false;
+}
+
+File.Copy(InfoPlistPath, InfoPlistPath + ".backup", true);
+
+var root = XElement.Load(InfoPlistPath);
+
+var versionStringKeyElement = root.XPathSelectElement("/dict/key[.=\"CFBundleShortVersionString\"]");
+if (versionStringKeyElement != null && versionStringKeyElement.NextNode is XElement && ((XElement)versionStringKeyElement.NextNode).Name == "string")
+{
+    ((XElement)versionStringKeyElement.NextNode).Value = BundleVersionString;
+}
+
+var versionKeyElement = root.XPathSelectElement("/dict/key[.=\"CFBundleVersion\"]");
+if (versionKeyElement != null && versionKeyElement.NextNode is XElement && ((XElement)versionKeyElement.NextNode).Name == "string")
+{
+	((XElement)versionKeyElement.NextNode).Value = BundleVersion;
+}
+
+root.Save(InfoPlistPath);
+
+return true;
+]]>
+      </Code>
+    </Task>
+  </UsingTask>
+  
+</Project>

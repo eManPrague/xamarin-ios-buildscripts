@@ -1,0 +1,266 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!-- Example usage: msbuild someproject.csproj /p:Label="1.0.0 DEV" /p:TextColorCode="#FFFFFF" /p:FillColorCode="#FF0000" -->
+  <!-- Example usage: msbuild someproject.csproj /p:Label="1.0.0 DEV" -->
+  
+  <!-- Label: Label drawed to images -->
+  <!-- [Optional] TextColorCode: Color of text -->
+  <!-- [Optional] FillColorCode: Ribbon background color -->
+
+  <Target Name="OverrideIcons" BeforeTargets="_DetectAppManifest">
+    <CallTarget Targets="CoreOverrideIcons"
+                Condition=" '$(Label)'!=''" />
+  </Target>
+  
+  <Target Name="RestoreBackupImages" AfterTargets="_CompileAppManifest">
+	
+	<RestoreImages ProjectDir="$(ProjectDir)" />
+	
+	<Message Text="Images restored" />
+	
+  </Target>
+
+  <Target Name="CoreOverrideIcons">
+		  
+    <Error Condition="'$(Label)'!='' and '$([System.Text.RegularExpressions.Regex]::IsMatch(&quot;$(Label)&quot;,&quot;\s+$&quot;))' == true"
+          Text="Label must not be empty string or only white spaces."/>
+		  
+    <ConvertImages Label="$(Label)" ProjectDir="$(ProjectDir)" TextColorCode="$(TextColorCode)" FillColorCode="$(FillColorCode)" />
+
+	<Message Text="Images converted" />
+	
+  </Target>
+
+  <UsingTask TaskName="ConvertImages" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
+    <ParameterGroup>
+	  <Label ParameterType="System.String" Required="true" />
+	  <ProjectDir ParameterType="System.String" Required="true" />
+	  <TextColorCode ParameterType="System.String" Required="false" />
+	  <FillColorCode ParameterType="System.String" Required="false" />
+    </ParameterGroup>
+
+    <Task>
+	  <Reference Include="System.Xml" />
+      <Reference Include="System.Xml.Linq" />
+	  <Reference Include="System.Drawing" />
+	  <Reference Include="System.Runtime.Serialization" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.Drawing" />
+      <Using Namespace="System.Drawing.Imaging" />
+      <Using Namespace="System.Linq" />
+	  <Using Namespace="System.Xml.Linq" />
+	  <Using Namespace="System.Xml.XPath" />
+	  <Using Namespace="System.IO" />
+	  <Using Namespace="System.Runtime.Serialization" />
+	  <Using Namespace="System.Runtime.Serialization.Json" />
+      <Code Type="Fragment" Language="cs">
+<![CDATA[
+	var fillColor = ColorTranslator.FromHtml("#DE3737");
+	if (!string.IsNullOrWhiteSpace(FillColorCode))
+		fillColor = ColorTranslator.FromHtml(FillColorCode);
+
+	var textColor = Color.White;
+	if (!string.IsNullOrWhiteSpace(TextColorCode))
+		textColor = ColorTranslator.FromHtml(TextColorCode);
+
+	var backupDir = Path.Combine(ProjectDir, "_backup");
+	if (!(File.Exists(Path.Combine(ProjectDir, "Info.plist"))))
+		return true;
+		
+	var iconFiles = new List<string>();
+	iconFiles.AddRange(GetInfoPlistStaticIcons(ProjectDir, "Info.plist"));
+	iconFiles.AddRange(GetInfoPlistAssetsIcons(ProjectDir, "Info.plist"));
+	iconFiles = iconFiles.Distinct().ToList();
+	
+	foreach (var file in iconFiles)
+	{
+		var backupFilePath = Path.Combine(backupDir, file);
+		var absoluteFilePath = Path.Combine(ProjectDir, file);
+
+		var backupDirectory = new FileInfo(backupFilePath).Directory;
+		if (backupDirectory != null && !backupDirectory.Exists)
+			backupDirectory.Create();
+
+		File.Copy(absoluteFilePath, backupFilePath, true);
+
+		var image = Image.FromFile(absoluteFilePath);
+		var bmp = new Bitmap(image.Width, image.Height);
+
+		using (var g = Graphics.FromImage(bmp))
+		{
+			var ribbonHeight = image.Height / 4;
+			var fontSize = ribbonHeight * 3 / 5f;
+			if (fontSize < 7)
+				continue;
+
+			g.DrawImage(image, new Rectangle(0, 0, image.Width, image.Height));
+			g.FillRectangle(new SolidBrush(fillColor), 0, image.Height - ribbonHeight, image.Width, ribbonHeight);
+			g.DrawString(Label, new Font("Arial", fontSize, FontStyle.Bold, GraphicsUnit.Pixel), new SolidBrush(textColor), new Rectangle(0, image.Height - ribbonHeight, image.Width, ribbonHeight), new StringFormat
+			{
+				LineAlignment = StringAlignment.Center,
+				Alignment = StringAlignment.Center
+			});
+		}
+
+		image.Dispose();
+		bmp.Save(absoluteFilePath, ImageFormat.Png);
+	}
+	
+	return true;
+}
+
+private static IList<string> GetInfoPlistStaticIcons(string projectDir, string infoPlistPath)
+{
+	var result = new List<string>();
+	var root = XElement.Load(Path.Combine(projectDir, infoPlistPath));
+
+	var bundleIconsKeyElement = root.XPathSelectElement("/dict/key[.=\"CFBundleIconFiles\"]");
+	if (bundleIconsKeyElement == null || !(bundleIconsKeyElement.NextNode is XElement) || ((XElement)bundleIconsKeyElement.NextNode).Name != "array")
+		return result;
+
+	var iconNames = ((XElement) bundleIconsKeyElement.NextNode).Elements("string").Select(x => x.Value).Distinct().ToList();
+	foreach (var item in iconNames)
+	{
+		if (!string.IsNullOrWhiteSpace(item))
+		{
+			var filePath = Path.Combine("Resources", ModifyRelativePathByOs(item));
+			if (File.Exists(Path.Combine(projectDir, filePath)) && !result.Contains(filePath))
+			{
+				result.Add(filePath);
+			}
+		}
+	}
+
+	return result;
+}
+
+private static IList<string> GetInfoPlistAssetsIcons(string projectDir, string infoPlistPath)
+{
+	var result = new List<string>();
+	var root = XElement.Load(Path.Combine(projectDir, infoPlistPath));
+
+	var iconAssetsKeyElement = root.XPathSelectElement("/dict/key[.=\"XSAppIconAssets\"]");
+	if (iconAssetsKeyElement == null || !(iconAssetsKeyElement.NextNode is XElement) || ((XElement)iconAssetsKeyElement.NextNode).Name != "string")
+		return result;
+
+	var appIconsLocation = ModifyRelativePathByOs(((XElement)iconAssetsKeyElement.NextNode).Value);
+	var appIconsFolderPath = Path.Combine(projectDir, appIconsLocation);
+	var contentAppIconsFilePath = Path.Combine(appIconsFolderPath, "Contents.json");
+	if (!File.Exists(contentAppIconsFilePath))
+		return result;
+
+	using (var fileStream = new FileStream(contentAppIconsFilePath, FileMode.Open))
+	{
+		var appIconsContent = (AppIconsContent)new DataContractJsonSerializer(typeof(AppIconsContent)).ReadObject(fileStream);
+		if (appIconsContent != null && appIconsContent.Images != null)
+		{
+			foreach (var item in appIconsContent.Images)
+			{
+				if (!string.IsNullOrWhiteSpace(item.Filename))
+				{
+					var filePath = ModifyRelativePathByOs(item.Filename);
+					var relativeFilePath = Path.Combine(appIconsLocation, filePath);
+					if (File.Exists(Path.Combine(appIconsFolderPath, filePath)) && !result.Contains(relativeFilePath))
+					{
+						result.Add(relativeFilePath);
+					}
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
+private static string ModifyRelativePathByOs(string relativePath)
+{
+	if (relativePath == null)
+		return null;
+
+	//Check if OS is Linux of Windows and modify path
+	int p = (int)Environment.OSVersion.Platform;
+	return (p == 4) || (p == 6) || (p == 128) ? relativePath.Replace('\\', '/').Trim('/') : relativePath.Replace('/', '\\').Trim('\\');
+}
+
+[DataContract]
+private class AppIconsContent
+{
+
+	[DataMember(Name = "images")]
+	public IList<AppIconContentItem> Images { get; set; }
+
+}
+
+[DataContract]
+private class AppIconContentItem
+{
+
+	[DataMember(Name = "filename")]
+	public string Filename { get; set; }
+
+}
+
+private bool IgnoreThisInjectedFunction() {
+// msbuild will complete this with:
+//     return _Success;
+// }
+
+]]>
+      </Code>
+    </Task>
+  </UsingTask>
+  
+  <UsingTask TaskName="RestoreImages" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
+    <ParameterGroup>
+	  <ProjectDir ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+
+    <Task>
+	  <Reference Include="System.Xml" />
+      <Reference Include="System.Xml.Linq" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.Linq" />
+	  <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs">
+<![CDATA[
+var backupDir = Path.Combine(ProjectDir, "_backup");
+
+if (!Directory.Exists(backupDir))
+	return true;
+
+var directoriesToAnalyze = new Stack<string>();
+var directoriesToDelete = new Stack<string>();
+directoriesToAnalyze.Push(backupDir);
+directoriesToDelete.Push(backupDir);
+
+while (directoriesToAnalyze.Any())
+{
+	var directory = directoriesToAnalyze.Pop();
+	foreach (var item in Directory.EnumerateDirectories(directory))
+	{
+		directoriesToAnalyze.Push(item);
+		directoriesToDelete.Push(item);
+	}
+
+	foreach (var item in Directory.EnumerateFiles(directory))
+	{
+		var relativePath = item.Substring(backupDir.Length).Trim('\\', '/');
+	    var originalFilePath = Path.Combine(ProjectDir, relativePath);
+		File.Copy(item, originalFilePath, true);
+		File.Delete(item);
+	}
+}
+
+while (directoriesToDelete.Any())
+{
+	var directory = directoriesToDelete.Pop();
+	Directory.Delete(directory);
+}
+
+return true;
+]]>
+      </Code>
+    </Task>
+  </UsingTask>
+  
+</Project>
